@@ -1,0 +1,17 @@
+#!/usr/bin/bash
+#PBS -l select=1:ncpus=24:ngpus=4
+#PBS -l place=scatter
+#PBS -l filesystems=grand
+#PBS -l walltime=00:05:00
+#PBS -A VeloC
+#PBS -q debug
+
+REPO_DIR=$HOME/experiments
+INIT_SCRIPT=$HOME/experiments/init-dh-environment2.sh
+
+cd $REPO_DIR
+source $INIT_SCRIPT
+
+cd $HOME/archai
+
+/opt/cray/pe/pals/1.1.7/bin/aprun -n 2 -d 5 ./run_aux_script_polaris_archai.sh $NUMBER_NODES
