@@ -18,6 +18,17 @@ import torch.nn as nn
 import transformers
 
 
+
+def model_size(model):
+    param_size = 0
+    for param in model.parameters():
+        param_size += param.nelement() * param.element_size()
+
+    buffer_size = 0
+    size_all_mb = (param_size + buffer_size) / 1024**2
+    return size_all_mb
+
+
 def get_some_data(args, train_dataloader, num_batches, device):
     traindata = []
     if args.dataset != "lm1b":

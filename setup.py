@@ -7,7 +7,7 @@ with open("README.md", "r", encoding='utf_8') as fh:
     long_description = fh.read()
 
 install_requires=[
-    'hyperopt', 'gorilla', 'ray>=1.0.0', 'sklearn',
+    'hyperopt', 'gorilla', 'ray>=1.0.0', 'scikit-learn',
     'tensorboard', 'tensorwatch>=0.9.1', 'tqdm',
     'kaleido', 'matplotlib', 'plotly', 'seaborn', 
     'h5py', 'psutil', 'pynvml', 'pyunpack', 'pyyaml', 'rarfile', 'Send2Trash',

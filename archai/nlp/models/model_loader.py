@@ -8,14 +8,17 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 import torch
 
-from onnxruntime.transformers.onnx_model import OnnxModel
+#from onnxruntime.transformers.onnx_model import OnnxModel
 
-from archai.nlp.models.config_base import Config, OnnxConfig, SearchConfig
+from archai.nlp.models.config_base import Config, SearchConfig
+#from archai.nlp.models.config_base import Config, OnnxConfig, SearchConfig
 from archai.nlp.models.model_base import ArchaiModel
-from archai.nlp.models.model_dict import (MODELS, MODELS_CONFIGS,
-                                          MODELS_SEARCH_CONFIGS, MODELS_PARAMS_FORMULAE,
-                                          ONNX_MODELS, ONNX_MODELS_CONFIGS)
+#from archai.nlp.models.model_dict import (MODELS, MODELS_CONFIGS,
+#                                          MODELS_SEARCH_CONFIGS, MODELS_PARAMS_FORMULAE,
+#                                          ONNX_MODELS, ONNX_MODELS_CONFIGS)
 
+from archai.nlp.models.model_dict import (MODELS, MODELS_CONFIGS,
+                                          MODELS_SEARCH_CONFIGS, MODELS_PARAMS_FORMULAE)
 
 def load_model_formula(model_type: str) -> Callable:
     """Loads an available analytical parameters formula.
@@ -125,7 +128,7 @@ def load_search_config(model_type: str) -> SearchConfig:
 
     return MODELS_SEARCH_CONFIGS[model_type]()
 
-
+'''
 def load_onnx_model(model_type: str, *model_args) -> OnnxModel:
     """Loads an available ONNX-based model (used during export optimization).
 
@@ -159,3 +162,4 @@ def load_onnx_config(model_type: str, model_config: Dict[str, Any]) -> OnnxConfi
         raise Exception(f'model_type: {model_type} not supported yet.')
 
     return ONNX_MODELS_CONFIGS[model_type](model_config)
+'''

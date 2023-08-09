@@ -1,8 +1,11 @@
 import transformers
-from pruners import predictive
+import archai
+import archai.nlp
+import archai.nlp.datasets
 from archai.nlp.datasets.distributed_utils.data_utils import get_lm_corpus
 from archai.nlp.datasets import exp_utils
 from archai.nlp.nas.zero_cost_utils.flops import get_model_flops
+from pruners import predictive
 import torch.nn as nn
 import torch
 import os
@@ -12,12 +15,19 @@ import yaml
 import collections
 import argparse
 import re
+import sys
 from scipy.stats import spearmanr
 import matplotlib.pyplot as plt
-
+from archai.nlp.nas.zero_cost_utils.transfer_utils import process_pred_graph, get_hashed_names 
 from archai.nlp.nas.zero_cost_utils.pruners.measures.synflow import get_synflow_scores
 from archai.nlp.models.model_loader import load_model_from_config
+from archai.nlp.nas.zero_cost_utils._mpi import *
 
+sys.path.insert(1, '/home/mmadhya1/experiments/')
+sys.path.insert(1, '/home/mmadhya1/experiments/cpp-store/')
+sys.path.insert(1, '/home/mmadhya1/')
+import experiments.transfer_learning as tl
+from mpi4py import MPI
 plt.rcParams.update({"font.size": 18})
 
 
@@ -36,14 +46,14 @@ def get_metrics(topk, sorted_ground_truth, sorted_target, val_ppl_list_gt, val_p
     # topk_val_ppl_list_gt = [val_ppl_list_gt[i] for i in range(len(val_ppl_list_gt)) if i in sorted_target_binned]
     # topk_val_ppl_list_target = [val_ppl_list_target[i] for i in range(len(val_ppl_list_target)) if i in sorted_target_binned]
     spr_rank, _ = spearmanr(topk_val_ppl_list_gt, topk_val_ppl_list_target)
-    print("Spearman Correlation on top %d %% (%d): %.3f" % (topk, len(topk_val_ppl_list_gt), spr_rank))
+    #print("Spearman Correlation on top %d %% (%d): %.3f" % (topk, len(topk_val_ppl_list_gt), spr_rank))
     # kendal_tau, _ = kendalltau(topk_val_ppl_list_gt, topk_val_ppl_list_target)
     # print('Kendal tau on top %d %% (%d): %.3f'%(topk, len(topk_val_ppl_list_gt), kendal_tau))
 
     return common_ratio, spr_rank
 
 
-def get_scores(args, exp_name, tr_iter, method="snip", compute_cost=False):
+def get_scores(args, exp_name, tr_iter, method="snip", compute_cost=False, transfer_method=None):
     path_to_results = exp_name
     
     scores = {}
@@ -58,16 +68,24 @@ def get_scores(args, exp_name, tr_iter, method="snip", compute_cost=False):
     count = 1
     yaml_file = os.path.join(path_to_results, f"{method}_scores_seed_{args.seed}.yaml")
     cost_file = os.path.join(path_to_results, f"{method}_cost.yaml")
+    print('yaml file: ', yaml_file, flush=True)
     if not os.path.exists(yaml_file) or (compute_cost and not os.path.exists(cost_file)):
+        print('doesnt exist!', flush=True)
         for _f in set(files):
             if "model_config.yaml" in _f:
                 idx =  re.search('(config_[0-9]+)', _f).span()[0]
                 job = _f[idx:]
                 config_name = job.split('/')[0] + '_' + job.split('/')[1]
+                job = _f[idx:]
                 with open(_f, "r") as f:
                     model_config = yaml.full_load(f)
-                
                 model = load_model_from_config(args.model_type, model_config)
+                job = _f[idx:]
+                
+                graph, hashed_names = get_hashed_names(model)
+                processed_graph = process_pred_graph(hashed_names, graph)
+
+                job = _f[idx:]
                 model.n_token = model_config["n_token"]
                 measures = predictive.find_measures(
                     args,
@@ -76,14 +94,14 @@ def get_scores(args, exp_name, tr_iter, method="snip", compute_cost=False):
                     (args.dataload, args.dataload_info, args.n_token),
                     args.device,
                     measure_names=[method],
+                    transfer_method=transfer_method,
+                    pred_graph=processed_graph,
+                    name_hash=hashed_names
                 )
                 scores[config_name] = measures[method]
                 if compute_cost:
                     cost = cost_fn(method, model, tr_iter, args.device)
                     costs[config_name] = cost
-                    print(count, config_name, 'score:', scores[config_name], 'FLOPS:', costs[config_name])
-                else:
-                    print(count, config_name, 'score:', scores[config_name])
                 count += 1
         
         print(f'saving to {yaml_file}')
@@ -179,26 +197,39 @@ def plot(args, methods):
     with open(yaml_file, "r") as f:
         results_gt = collections.OrderedDict(yaml.safe_load(f))
 
+    gt_dict = {}
+    for k, v in results_gt.items():
+        gt_dict[k] = v['valid_ppl']
     with open(os.path.join(path_to_results, "params_summary.yaml"), "r") as f:
         nparams_dict = collections.OrderedDict(yaml.safe_load(f))
 
-    costs = {}
+    #costs = {}
     scores = {}
     for m in methods:
         fname = f"{m}_scores_seed_{args.seed}.yaml"
         with open(os.path.join(path_to_results, fname), "r") as f:
             print("loading scores for method ", m)
-            scores[m] = yaml.safe_load(f)
-        fname = f"{m}_cost.yaml"
-        with open(os.path.join(path_to_results, fname), "r") as f:
-            print("loading costs for method ", m)
-            costs[m] = yaml.safe_load(f)
+            if m == 'snip':
+                scores[m] = yaml.safe_load(f)
+                results_snip = collections.OrderedDict(scores[m])
+                snip_list = []
+                for k, v in results_snip.items():
+                   snip_list.append((k, v)) 
+                snip_list.sort(key=lambda x: x[1], reverse=True)    
+                baseline_accuracies = []
+                for ele in snip_list:
+                    baseline_accuracies.append(gt_dict[ele[0]])
 
-    costs["nparams"] = {}
+        #fname = f"{m}_cost.yaml"
+        #with open(os.path.join(path_to_results, fname), "r") as f:
+        #    print("loading costs for method ", m)
+        #    costs[m] = yaml.safe_load(f)
+
+    #costs["nparams"] = {}
     scores["nparams"] = {}
     for k, v in nparams_dict.items():
         scores["nparams"][k] = v["Attn"] + v["FFN"]
-        costs["nparams"][k] = 0.0
+        #costs["nparams"][k] = 0.0
 
     topk_list = [10, 30, 50, 100]  # range(10,101,10)
     for m in scores.keys():
@@ -207,45 +238,14 @@ def plot(args, methods):
             prev_scores = scores[m]
             scores[m] = {k: -s for k, s in prev_scores.items()}
         common_ratio, spr_rank, param_corr = get_statistics(m, results_gt, scores, nparams_dict, topk_list)
-        print('avg FLOPs:', np.mean(list(costs[m].values())))
+        #print('avg FLOPs:', np.mean(list(costs[m].values())))
         common_ratios[m] = common_ratio
         spr_ranks[m] = spr_rank
+        print('m: ', m, ' spr_ranks[m]: ', spr_ranks[m], flush=True)
         param_corrs[m] = param_corr
+        print('m: ', m, ' param_corr[m]: ', param_corrs[m], flush=True)
 
-    markers = ["o", "^", "s", "P", "*", "X", "d", "v"]
-    colors = plt.cm.Blues(np.linspace(0.5, 1, len(markers)))
-    labels = {
-        "grad_norm": "GradNorm",
-        "snip": "Snip",
-        "fisher": "Fisher",
-        "jacob_cov": "JacobCov",
-        "grasp": "Grasp",
-        "jacob_cov_relu": "ReLU",
-        "synflow": "Synflow",
-        "nparams": "# Params",
-    }
-    plt.figure(figsize=(6, 4))
-    for i, m in enumerate(common_ratios.keys()):
-        l = labels[m]
-        avg_cost = np.mean(list(costs[m].values()))
-        plt.scatter(
-            avg_cost,
-            spr_ranks[m][-1],
-            label=l,
-            marker=markers[i],
-            s=180,
-            c=colors[i],
-        )
-    plt.ylabel("Spearman's Correlation")
-    plt.xlabel("FLOPs Cost")
-    plt.ylim((0.79, 1.0))
-    # plt.xlim((-1e10, 2e11))
-    plt.grid(axis="y")
-    # plt.title('ranking based on zero-cost methods')
-    plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
-    path_to_plot = os.path.join(args.exp_name,'plots')
-    os.makedirs(path_to_plot, exist_ok=True)
-    plt.savefig(os.path.join(path_to_plot, f"spearman_cost_zero-cost.png", bbox_inches="tight")
+
 
 
 def cost_fn(method, model, tr_iter, device):
@@ -324,9 +324,28 @@ def parse_arguments():
     return args
 
 
+
+global my_transfer_method
+
+if not MPI.Is_initialized():
+    MPI.Init_thread()
+rank = MPI.COMM_WORLD.rank
+size = MPI.COMM_WORLD.size
+
+
+setup = MPIExperimentSetup()
+setup.setup_gpus(ds_colocated=True)
+#TODO: Add argparse + options for the no transfer case
+transfer_method_cls = tl.transfer_methods.make_transfer_method('datastates', 'pytorch')
+setup.workcomm, conn_strs = transfer_method_cls.startup_server(ds_colocated=True)
+my_transfer_method = transfer_method_cls(
+    hosts=conn_strs,
+    bulk_storage_path='.',
+    debug=False,
+    store_weights=True
+)
 if __name__ == "__main__":
     args = parse_arguments()
-
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
@@ -344,13 +363,12 @@ if __name__ == "__main__":
     train_itr = corpus.get_iterator("train", eval_batch_size, eval_tgt_len, device=args.device, mem_len=0, ext_len=0)
     args.n_token = len(corpus.vocab)
 
-    methods = ["snip", "grad_norm", "fisher", "jacob_cov", "grasp", "jacob_cov_relu", "synflow"]
+    methods = ["snip"]
     for method in methods:
-        print(f"------------ {method} ------------")
+        print(f"------------ {method} ------------", flush=True)
         if method == 'synflow':
             get_synflow_scores(args, args.exp_name)
         else:
-            get_scores(args, args.exp_name, train_itr, method=method, compute_cost=args.get_cost)
+            get_scores(args, args.exp_name, train_itr, method=method, compute_cost=args.get_cost, transfer_method=my_transfer_method)
 
-    if args.plot:
-        plot(args, methods=methods)
+    plot(args, methods=methods)

@@ -22,8 +22,9 @@ import types
 import transformers
 
 from . import measure
-from ..p_utils import get_layer_metric_array
-
+from ..p_utils import get_layer_metric_array, model_size
+import time
+import uuid
 
 def snip_forward_embedding(self, x):
     return F.embedding(
@@ -63,7 +64,8 @@ def snip_forward_conv1d(self, x):
 
 
 @measure("snip", bn=True, mode="param")
-def compute_snip_per_weight(net, inputs, targets, mode, loss_fn, split_data=1):
+def compute_snip_per_weight(net, inputs, targets, mode, loss_fn, split_data=1, pred_graph=None, name_hash=None, transfer_method=None):
+    model_id = int(uuid.uuid4().int>>64)
     for layer in net.modules():
         if isinstance(layer, nn.Conv2d) or isinstance(layer, transformers.Conv1D) or isinstance(layer, nn.Linear):
             layer.weight_mask = nn.Parameter(torch.ones_like(layer.weight))
@@ -82,6 +84,12 @@ def compute_snip_per_weight(net, inputs, targets, mode, loss_fn, split_data=1):
     # Compute gradients (but don't apply them)
     # net.zero_grad()
     net.train()
+    if transfer_method:
+        transfer_time_start = time.time()
+        transferred, parent_id = transfer_method.transfer(
+            net, id=model_id, name_hash=name_hash, pred_graph=pred_graph, hint=None
+        )
+        transfer_time_end = time.time()
     for param in net.parameters():
         param.grad = None
 
@@ -102,12 +110,28 @@ def compute_snip_per_weight(net, inputs, targets, mode, loss_fn, split_data=1):
             return torch.zeros_like(layer.weight)
 
     grads_abs = get_layer_metric_array(net, snip, mode)
-
+    if transfer_method:
+        grad_sum = 0.0
+        for i in range(len(grads_abs)):
+            grad_sum += torch.sum(grads_abs[i])
+        grad_sum  = grad_sum.item()
+        store_time_start = time.time()
+        #Note: val_acc param breaks prefix ties by the model score. TODO: use a better variable name
+        transfer_method.store(
+                              id=model_id,
+                              model=net,
+                              name_hash=name_hash,
+                              pred_graph=pred_graph,
+                              prefix=transferred,
+                              val_acc=grad_sum
+                              )
+        store_time_end = time.time()
     return grads_abs
 
 
 @measure("snip_wemb", bn=True, mode="param")
-def compute_snip_per_weight(net, inputs, targets, mode, loss_fn, split_data=1):
+def compute_snip_per_weight(net, inputs, targets, mode, loss_fn, split_data=1, pred_graph=None, name_hash=None, transfer_method=None):
+    model_id = int(uuid.uuid4().int>>64)
     for layer in net.modules():
         if (
             isinstance(layer, nn.Conv2d)

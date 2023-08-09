@@ -54,9 +54,9 @@ def load_all():
     from . import snip
     from . import grasp
     from . import fisher
-    from . import jacob_cov
-    from . import plain
-    from . import jacob_cov_relu
+    #from . import jacob_cov
+    #from . import plain
+    #from . import jacob_cov_relu
 
 
 # TODO: should we do that by default?
